@@ -13,7 +13,8 @@ struct WiFiCredential {
 
 WiFiCredential wifiList[] = {
     {"Direccion_2.4", "14809414*"},
-    {"IZZI-B2C2", "TU_PASSWORD_AQUI"}
+    {"IZZI-B2C2", "JDZMRJZLR2NL"},
+    {"Lobo", "SanPau2025"},
 };
 
 const int wifiCount = sizeof(wifiList) / sizeof(wifiList[0]);
@@ -25,15 +26,18 @@ const int port = 22896;
 // ================= CONFIG =================
 #define BATCH_SIZE 1
 #define QUEUE_SIZE 10
+#define EMBEDDED_MAC_START_BYTE 20
+#define EMBEDDED_MAC_END_BYTE   25
+#define EMBEDDED_MAC_LENGTH     6
 
 // ================= DATA =================
 struct Beacon {
     char mac[18];
+    char embeddedMac[18];
     char name[32];
     int rssi;
     char uuid[20];
-    char manufacturer[60];
-    //char payload[100];
+    char manufacturer[100];
     unsigned long timestamp;
 };
 
@@ -52,121 +56,211 @@ QueueHandle_t beaconQueue;
 unsigned long bootMillis = 0;
 time_t bootEpoch = 0;
 
+// ================= MAC EMBEDDED =================
+
+String extractEmbeddedMac(
+    const std::string& manufacturerData
+) {
+
+    // Validar tamaño mínimo
+    if (
+        manufacturerData.length() <
+        (EMBEDDED_MAC_END_BYTE + 1)
+    ) {
+
+        Serial.println(
+            "Manufacturer data demasiado corto"
+        );
+
+        return "";
+    }
+
+    char macStr[18] = {0};
+
+    snprintf(
+        macStr,
+        sizeof(macStr),
+        "%02X:%02X:%02X:%02X:%02X:%02X",
+
+        (uint8_t)manufacturerData[20],
+        (uint8_t)manufacturerData[21],
+        (uint8_t)manufacturerData[22],
+        (uint8_t)manufacturerData[23],
+        (uint8_t)manufacturerData[24],
+        (uint8_t)manufacturerData[25]
+    );
+
+    return String(macStr);
+}
+
 // ================= BLE CALLBACK =================
 class ScanCallbacks : public NimBLEScanCallbacks {
 
     void onResult(const NimBLEAdvertisedDevice* device) override {
 
-        if (!device->haveManufacturerData()) {
-            return;
-        }
+        bool validBeacon = false;
 
-        std::string data =
-            device->getManufacturerData();
+        char dataHex[100] = {0};
 
-        if (data.length() < 4) {
-            return;
-        }
+        String embeddedMac = "";
 
-        uint8_t* d = (uint8_t*)data.data();
+        // ================= MANUFACTURER DATA =================
+        if (device->haveManufacturerData()) {
 
-        char manufacturerHex[60] = {0};
+            std::string data =
+                device->getManufacturerData();
 
-        size_t manufacturerIndex = 0;
+            if (data.length() >= 4) {
 
-        for (size_t i = 0; i < data.length(); i++) {
+                uint8_t* d =
+                    (uint8_t*)data.data();
 
-            manufacturerIndex += snprintf(
-                manufacturerHex + manufacturerIndex,
-                sizeof(manufacturerHex) - manufacturerIndex,
-                "%02X",
-                (uint8_t)data[i]
-            );
+                // ===== FILTRO MINEW =====
+                if (
+                    d[0] == 0x39 &&
+                    d[1] == 0x06
+                ) {
 
-            if (
-                manufacturerIndex >=
-                sizeof(manufacturerHex)
-            ) {
-                break;
+                    validBeacon = true;
+
+                    // ===== EXTRAER EMBEDDED MAC SOLO SI EXISTE =====
+                    if (
+                        data.length() >=
+                        (EMBEDDED_MAC_END_BYTE + 1)
+                    ) {
+
+                        embeddedMac =
+                            extractEmbeddedMac(data);
+                    }
+
+                    size_t index = 0;
+
+                    for (size_t i = 0; i < data.length(); i++) {
+
+                        index += snprintf(
+                            dataHex + index,
+                            sizeof(dataHex) - index,
+                            "%02X",
+                            (uint8_t)data[i]
+                        );
+
+                        if (index >= sizeof(dataHex)) {
+                            break;
+                        }
+                    }
+
+                    Serial.println("\n=== BEACON ManufacturerData ===");
+                }
             }
         }
 
-        // FILTRO BEACON
-        if (
-            d[0] != 0x39 ||
-            d[1] != 0x06 ||
-            d[2] != 0xCC ||
-            d[3] != 0x05
-        ) {
+        // ================= SERVICE DATA =================
+        if (!validBeacon && device->haveServiceData()) {
+
+            std::string serviceData =
+                device->getServiceData();
+
+            if (serviceData.length() >= 2) {
+
+                uint8_t* sd =
+                    (uint8_t*)serviceData.data();
+
+                // ===== FILTRO CARD =====
+                if (
+                    sd[0] == 0x06 &&
+                    sd[1] == 0x63
+                ) {
+
+                    validBeacon = true;
+
+                    size_t index = 0;
+
+                    for (size_t i = 0; i < serviceData.length(); i++) {
+
+                        index += snprintf(
+                            dataHex + index,
+                            sizeof(dataHex) - index,
+                            "%02X",
+                            (uint8_t)serviceData[i]
+                        );
+
+                        if (index >= sizeof(dataHex)) {
+                            break;
+                        }
+                    }
+
+                    Serial.println("\n=== BEACON ServiceData ===");
+                }
+            }
+        }
+
+        // ================= DESCARTAR =================
+        if (!validBeacon) {
             return;
         }
 
+        // ================= INFO =================
         std::string mac =
             device->getAddress().toString();
 
-        // ================= FILTRO MAC =================
-        if (mac != "c3:00:00:6b:a7:e5") {
-            return;
+        String finalMac;
+
+        if (embeddedMac.length() > 0) {
+            finalMac = embeddedMac; 
+        } else {
+            finalMac = mac.c_str();
         }
 
-        // char payloadHex[100] = {0};
-
-        // size_t payloadIndex = 0;
-
-        // for (
-        //     size_t i = 0;
-        //     i < device->getAdvLength();
-        //     i++
-        // ) {
-
-        //     payloadIndex += snprintf(
-        //         payloadHex + payloadIndex,
-        //         sizeof(payloadHex) - payloadIndex,
-        //         "%02X ",
-        //         device->getPayload()[i]
-        //     );
-
-        //     if (
-        //         payloadIndex >=
-        //         sizeof(payloadHex)
-        //     ) {
-        //         break;
-        //     }
-        // }
-
-        Serial.println("\n BEACON DETECTADO");
-
-        Serial.print("Name: ");
-        Serial.println(device->getName().c_str());
-
-        Serial.print("MAC: ");
+        Serial.print("MAC BLE: ");
         Serial.println(mac.c_str());
+
+        if (embeddedMac.length() > 0) {
+
+            Serial.print("Embedded MAC: ");
+            Serial.println(embeddedMac);
+
+        } else {
+
+            Serial.println(
+                "Beacon sin Embedded MAC"
+            );
+        }
 
         Serial.print("RSSI: ");
         Serial.println(device->getRSSI());
 
-        Serial.print("UUID: ");
-        Serial.println(device->getServiceDataUUID().toString().c_str());
+        Serial.print("Name: ");
+        Serial.println(device->getName().c_str());
 
+        if (device->haveServiceData()) {
 
+            Serial.print("Service UUID: ");
 
-        Serial.print("Manufacturer Data: ");
-        Serial.println(manufacturerHex);
+            Serial.println(
+                device->getServiceDataUUID()
+                    .toString()
+                    .c_str()
+            );
+        }
 
-        // Serial.print("Payload: ");
-        // for (size_t i = 0; i < device->getAdvLength(); i++) {
-        //     Serial.printf("%02X ", device->getPayload()[i]);
-        // }
-        // Serial.println();
+        Serial.print("DATA: ");
+        Serial.println(dataHex);
 
-        // ================= GUARDAR BEACON =================
+        // ================= GUARDAR =================
         Beacon beacon;
 
         snprintf(
             beacon.mac,
             sizeof(beacon.mac),
             "%s",
-            mac.c_str()
+            finalMac.c_str()
+        );
+
+        snprintf(
+            beacon.embeddedMac,
+            sizeof(beacon.embeddedMac),
+            "%s",
+            embeddedMac.c_str()
         );
 
         snprintf(
@@ -182,28 +276,23 @@ class ScanCallbacks : public NimBLEScanCallbacks {
             beacon.uuid,
             sizeof(beacon.uuid),
             "%s",
-            device->getServiceDataUUID()
-                .toString()
-                .c_str()
+            device->haveServiceData()
+                ? device->getServiceDataUUID()
+                    .toString()
+                    .c_str()
+                : "N/A"
         );
 
         snprintf(
             beacon.manufacturer,
             sizeof(beacon.manufacturer),
             "%s",
-            manufacturerHex
+            dataHex
         );
-
-        // snprintf(
-        //     beacon.payload,
-        //     sizeof(beacon.payload),
-        //     "%s",
-        //     payloadHex
-        // );
 
         beacon.timestamp = millis();
 
-        // ================= ENVIAR A QUEUE =================
+        // ================= QUEUE =================
         if (
             xQueueSend(
                 beaconQueue,
@@ -213,7 +302,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
         ) {
 
             Serial.println("Queue llena");
-        }    
+        }
     }
 };
 
@@ -280,7 +369,7 @@ void taskProcess(void *pv) {
                     strftime(
                         datetime,
                         sizeof(datetime),
-                        "%Y-%m-%d %H:%M:%S",
+                        "%Y-%m-%dT%H:%M:%S",
                         t
                     );
 
