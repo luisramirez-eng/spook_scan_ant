@@ -15,6 +15,7 @@ WiFiCredential wifiList[] = {
     {"Direccion_2.4", "14809414*"},
     {"IZZI-B2C2", "JDZMRJZLR2NL"},
     {"Lobo", "SanPau2025"},
+    {"Telcel_2.4GHz", "9C8B1E5F"},
 };
 
 const int wifiCount = sizeof(wifiList) / sizeof(wifiList[0]);
