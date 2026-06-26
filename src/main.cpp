@@ -158,19 +158,26 @@ class ScanCallbacks : public NimBLEScanCallbacks {
         // ================= SERVICE DATA =================
         if (!validBeacon && device->haveServiceData()) {
 
-            std::string serviceData =
-                device->getServiceData();
+            std::string serviceData = device->getServiceData();
 
             if (serviceData.length() >= 2) {
 
-                uint8_t* sd =
-                    (uint8_t*)serviceData.data();
+                uint8_t* sd = (uint8_t*)serviceData.data();
 
-                // ===== FILTRO CARD =====
-                if (
-                    sd[0] == 0x06 &&
-                    sd[1] == 0x63
-                ) {
+                // ===== EXTRAER MAC VALIDA =====
+                bool matchMAC = 
+                    device->getAddress().toString().starts_with("c2:03:03");
+
+                // ===== MATCH POR DATA =====
+                bool matchData =
+                    (sd[0] == 0x06 && sd[1] == 0x63);
+
+                // ===== MATCH POR SERVICE UUID (CORRECTO EN NIMBLE 2.5) =====
+                bool matchUUID =
+                    device->isAdvertisingService(NimBLEUUID((uint16_t)0xFCA6));
+
+                // ===== FILTRO FINAL =====
+                if ((matchData || matchUUID) && matchMAC) {
 
                     validBeacon = true;
 
@@ -312,14 +319,16 @@ void taskBLE(void *pv) {
 
     NimBLEDevice::init("");
 
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+
     pScan = NimBLEDevice::getScan();
 
     pScan->setScanCallbacks(new ScanCallbacks());
 
-    pScan->setActiveScan(false);
+    pScan->setActiveScan(true);
 
-    pScan->setInterval(2000);
-    pScan->setWindow(50);
+    pScan->setInterval(100);
+    pScan->setWindow(99);
 
     Serial.println(" BLE iniciado");
 
@@ -392,27 +401,27 @@ void taskProcess(void *pv) {
                     Serial.println("\nFRAME:");
                     Serial.println(frameBuffer);
 
-                    // ===== TCP =====
-                    NetworkClient client;
+                    // // ===== TCP =====
+                    // NetworkClient client;
 
-                    Serial.println("Conectando TCP...");
+                    // Serial.println("Conectando TCP...");
 
-                    if (client.connect(host, port)) {
+                    // if (client.connect(host, port)) {
 
-                        Serial.println("TCP conectado");
+                    //     Serial.println("TCP conectado");
 
-                        client.println(frameBuffer);
+                    //     client.println(frameBuffer);
 
-                        Serial.println("FRAME ENVIADO");
+                    //     Serial.println("FRAME ENVIADO");
 
-                        client.stop();
+                    //     client.stop();
 
-                        Serial.println("TCP cerrado");
+                    //     Serial.println("TCP cerrado");
 
-                    } else {
+                    // } else {
 
-                        Serial.println("Error TCP");
-                    }
+                    //     Serial.println("Error TCP");
+                    // }
 
                     delay(300);
                 }
